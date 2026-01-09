@@ -11,7 +11,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MOCK_API_KEY = process.env.MOCK_API_KEY; // 不设置则跳过验证
 
 // OpenRouter model to use (always Sonnet 3.5)
-const TARGET_MODEL = 'anthropic/claude-sonnet-4-20250514';
+const TARGET_MODEL = 'anthropic/claude-3.5-sonnet';
 
 // Middleware: Validate API key (跳过验证如果未设置 MOCK_API_KEY)
 function validateApiKey(req, res, next) {
