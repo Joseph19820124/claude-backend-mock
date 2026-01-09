@@ -159,17 +159,17 @@ function transformToOpenAI(anthropicRequest) {
 }
 
 // Transform OpenAI response to Anthropic format
-function transformToAnthropic(openaiResponse, originalModel) {
+function transformToAnthropic(openaiResponse) {
   const choice = openaiResponse.choices?.[0];
   const message = choice?.message;
-  
+
   const content = [];
-  
+
   // Handle text content
   if (message?.content) {
     content.push({ type: 'text', text: message.content });
   }
-  
+
   // Handle tool calls
   if (message?.tool_calls) {
     for (const toolCall of message.tool_calls) {
@@ -181,14 +181,14 @@ function transformToAnthropic(openaiResponse, originalModel) {
       });
     }
   }
-  
+
   return {
     id: openaiResponse.id || `msg_${Date.now()}`,
     type: 'message',
     role: 'assistant',
-    model: originalModel, // Return the model that was requested
+    model: TARGET_MODEL, // Always return the actual model being used
     content: content.length > 0 ? content : [{ type: 'text', text: '' }],
-    stop_reason: choice?.finish_reason === 'stop' ? 'end_turn' 
+    stop_reason: choice?.finish_reason === 'stop' ? 'end_turn'
       : choice?.finish_reason === 'tool_calls' ? 'tool_use'
       : choice?.finish_reason === 'length' ? 'max_tokens'
       : 'end_turn',
@@ -201,7 +201,7 @@ function transformToAnthropic(openaiResponse, originalModel) {
 }
 
 // Handle streaming response
-function handleStreamingResponse(req, res, openaiRequest, originalModel) {
+function handleStreamingResponse(req, res, openaiRequest) {
   const postData = JSON.stringify(openaiRequest);
   
   const options = {
@@ -230,7 +230,7 @@ function handleStreamingResponse(req, res, openaiRequest, originalModel) {
       id: messageId,
       type: 'message',
       role: 'assistant',
-      model: originalModel,
+      model: TARGET_MODEL, // Always return the actual model being used
       content: [],
       stop_reason: null,
       stop_sequence: null,
@@ -282,7 +282,7 @@ function handleStreamingResponse(req, res, openaiRequest, originalModel) {
 
             console.log('\n📨 STREAM END (to Claude Code):');
             console.log(`  Total output tokens: ${totalOutputTokens}`);
-            console.log(`  Model shown to user: ${originalModel}`);
+            console.log(`  Model returned: ${TARGET_MODEL}`);
             console.log('='.repeat(80) + '\n');
 
             res.end();
@@ -334,7 +334,7 @@ function handleStreamingResponse(req, res, openaiRequest, originalModel) {
 }
 
 // Handle non-streaming response
-async function handleNonStreamingResponse(req, res, openaiRequest, originalModel) {
+async function handleNonStreamingResponse(req, res, openaiRequest) {
   const postData = JSON.stringify(openaiRequest);
   
   return new Promise((resolve, reject) => {
@@ -374,7 +374,7 @@ async function handleNonStreamingResponse(req, res, openaiRequest, originalModel
               }
             });
           } else {
-            const anthropicResponse = transformToAnthropic(openaiResponse, originalModel);
+            const anthropicResponse = transformToAnthropic(openaiResponse);
             console.log('\n📨 RESPONSE TO CLAUDE CODE (non-stream):');
             console.log(JSON.stringify(anthropicResponse, null, 2));
             console.log('='.repeat(80) + '\n');
@@ -409,7 +409,6 @@ async function handleNonStreamingResponse(req, res, openaiRequest, originalModel
 // Main messages endpoint
 app.post('/v1/messages', validateApiKey, logRequest, async (req, res) => {
   try {
-    const originalModel = req.body.model || 'claude-3-5-sonnet-20241022';
     const openaiRequest = transformToOpenAI(req.body);
 
     console.log(`\n📤 OUTGOING REQUEST (to OpenRouter):`);
@@ -417,11 +416,11 @@ app.post('/v1/messages', validateApiKey, logRequest, async (req, res) => {
     console.log(`  Stream: ${openaiRequest.stream}`);
     console.log(`  Messages count: ${openaiRequest.messages.length}`);
     console.log(`  Max tokens: ${openaiRequest.max_tokens}`);
-    
+
     if (openaiRequest.stream) {
-      handleStreamingResponse(req, res, openaiRequest, originalModel);
+      handleStreamingResponse(req, res, openaiRequest);
     } else {
-      await handleNonStreamingResponse(req, res, openaiRequest, originalModel);
+      await handleNonStreamingResponse(req, res, openaiRequest);
     }
   } catch (err) {
     console.error('Error processing request:', err);
