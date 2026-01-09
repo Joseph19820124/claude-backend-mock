@@ -38,8 +38,32 @@ function validateApiKey(req, res, next) {
 // Middleware: Log requests
 function logRequest(req, res, next) {
   const originalModel = req.body?.model || 'unknown';
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
-  console.log(`  Original model: ${originalModel} -> Target: ${TARGET_MODEL}`);
+  const requestId = `req_${Date.now()}`;
+  req.requestId = requestId;
+
+  console.log('\n' + '='.repeat(80));
+  console.log(`[${new Date().toISOString()}] REQUEST ${requestId}`);
+  console.log('='.repeat(80));
+  console.log(`Method: ${req.method} ${req.path}`);
+  console.log(`Original model: ${originalModel} -> Target: ${TARGET_MODEL}`);
+
+  // Log incoming request body (truncate long content)
+  const bodyToLog = JSON.parse(JSON.stringify(req.body));
+  if (bodyToLog.system && typeof bodyToLog.system === 'string' && bodyToLog.system.length > 500) {
+    bodyToLog.system = bodyToLog.system.substring(0, 500) + '... [TRUNCATED]';
+  }
+  if (bodyToLog.messages) {
+    bodyToLog.messages = bodyToLog.messages.map(msg => {
+      const m = { ...msg };
+      if (typeof m.content === 'string' && m.content.length > 500) {
+        m.content = m.content.substring(0, 500) + '... [TRUNCATED]';
+      }
+      return m;
+    });
+  }
+  console.log('\n📥 INCOMING REQUEST (from Claude Code):');
+  console.log(JSON.stringify(bodyToLog, null, 2));
+
   next();
 }
 
@@ -200,7 +224,7 @@ function handleStreamingResponse(req, res, openaiRequest, originalModel) {
   
   // Send initial message_start event
   const messageId = `msg_${Date.now()}`;
-  res.write(`event: message_start\ndata: ${JSON.stringify({
+  const messageStartEvent = {
     type: 'message_start',
     message: {
       id: messageId,
@@ -212,7 +236,10 @@ function handleStreamingResponse(req, res, openaiRequest, originalModel) {
       stop_sequence: null,
       usage: { input_tokens: 0, output_tokens: 0 }
     }
-  })}\n\n`);
+  };
+  console.log('\n📨 STREAM START (to Claude Code):');
+  console.log(JSON.stringify(messageStartEvent, null, 2));
+  res.write(`event: message_start\ndata: ${JSON.stringify(messageStartEvent)}\n\n`);
   
   // Send content_block_start
   res.write(`event: content_block_start\ndata: ${JSON.stringify({
@@ -239,19 +266,25 @@ function handleStreamingResponse(req, res, openaiRequest, originalModel) {
               type: 'content_block_stop',
               index: 0
             })}\n\n`);
-            
+
             // Send message_delta with stop_reason
-            res.write(`event: message_delta\ndata: ${JSON.stringify({
+            const messageDelta = {
               type: 'message_delta',
               delta: { stop_reason: 'end_turn', stop_sequence: null },
               usage: { output_tokens: totalOutputTokens }
-            })}\n\n`);
-            
+            };
+            res.write(`event: message_delta\ndata: ${JSON.stringify(messageDelta)}\n\n`);
+
             // Send message_stop
             res.write(`event: message_stop\ndata: ${JSON.stringify({
               type: 'message_stop'
             })}\n\n`);
-            
+
+            console.log('\n📨 STREAM END (to Claude Code):');
+            console.log(`  Total output tokens: ${totalOutputTokens}`);
+            console.log(`  Model shown to user: ${originalModel}`);
+            console.log('='.repeat(80) + '\n');
+
             res.end();
             return;
           }
@@ -331,6 +364,8 @@ async function handleNonStreamingResponse(req, res, openaiRequest, originalModel
           const openaiResponse = JSON.parse(data);
           
           if (openaiResponse.error) {
+            console.log('\n❌ OPENROUTER ERROR:');
+            console.log(JSON.stringify(openaiResponse.error, null, 2));
             res.status(proxyRes.statusCode || 500).json({
               type: 'error',
               error: {
@@ -340,6 +375,9 @@ async function handleNonStreamingResponse(req, res, openaiRequest, originalModel
             });
           } else {
             const anthropicResponse = transformToAnthropic(openaiResponse, originalModel);
+            console.log('\n📨 RESPONSE TO CLAUDE CODE (non-stream):');
+            console.log(JSON.stringify(anthropicResponse, null, 2));
+            console.log('='.repeat(80) + '\n');
             res.json(anthropicResponse);
           }
           resolve();
@@ -373,9 +411,12 @@ app.post('/v1/messages', validateApiKey, logRequest, async (req, res) => {
   try {
     const originalModel = req.body.model || 'claude-3-5-sonnet-20241022';
     const openaiRequest = transformToOpenAI(req.body);
-    
+
+    console.log(`\n📤 OUTGOING REQUEST (to OpenRouter):`);
+    console.log(`  Model: ${openaiRequest.model}`);
     console.log(`  Stream: ${openaiRequest.stream}`);
     console.log(`  Messages count: ${openaiRequest.messages.length}`);
+    console.log(`  Max tokens: ${openaiRequest.max_tokens}`);
     
     if (openaiRequest.stream) {
       handleStreamingResponse(req, res, openaiRequest, originalModel);
